@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bangumi 首页更新提醒
 // @namespace    https://github.com/imagebuilder1837/bangumi-home-update-reminder
-// @version      0.1.0
+// @version      0.1.1
 // @description  定时检测 Bangumi 首页的新动态、小组话题与热门条目讨论，并在有更新时提醒。
 // @author       imagebuilder1837
 // @match        https://bgm.tv/
@@ -273,6 +273,10 @@
   }
 
   function initialize() {
+    // const debugReminder = createReminder(() => debugReminder.stop());
+    // debugReminder.update({ counts: [3, 2, 5], hasUpdates: true });
+    // return;
+
     const initial = readSnapshot(document);
     if (!initial) return;
     const observe = createTracker(initial);
