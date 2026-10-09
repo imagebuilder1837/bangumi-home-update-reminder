@@ -102,27 +102,35 @@
 
     return (snapshot) => {
       if (snapshot.account !== initial.account) return null;
+      let hasUpdates = false;
       for (const id of snapshot.dynamic) {
-        if (!seen.has(id)) pending[0].add(id);
+        if (!seen.has(id)) {
+          pending[0].add(id);
+          hasUpdates = true;
+        }
         seen.add(id);
       }
       [snapshot.group, snapshot.subject].forEach((topics, index) => {
         const previous = lastReplies[index];
         for (const [id, replies] of topics) {
-          if (!previous.has(id) || replies > previous.get(id))
+          if (!previous.has(id) || replies > previous.get(id)) {
             pending[index + 1].add(id);
+            hasUpdates = true;
+          }
           // Decreases become the comparison value too; missing topics retain it.
           previous.set(id, replies);
         }
       });
-      return pending.map((items) => items.size);
+      return { counts: pending.map((items) => items.size), hasUpdates };
     };
   }
 
-  function createReminder() {
+  function createReminder(onIgnorePage) {
     let total = 0;
     let prefix = "";
+    let toast;
     let summary;
+    let titleObserver;
 
     function updateTitle() {
       const current = document.title;
@@ -141,19 +149,15 @@
       style.textContent = `
         #${TOAST_ID} {
           position: fixed;
-          z-index: 1000;
-          top: calc(16px + env(safe-area-inset-top, 0px));
+          z-index: 9;
+          top: calc(48px + env(safe-area-inset-top, 0px));
           left: 50%;
           transform: translateX(-50%);
+          box-sizing: border-box;
           width: max-content;
           max-width: calc(100vw - 32px);
-        }
-        #${TOAST_ID} button {
-          display: block;
-          box-sizing: border-box;
-          width: 100%;
           margin: 0;
-          padding: 12px 18px;
+          padding: 10px 16px;
           border: 1px solid #e8e8e8;
           border-top: 3px solid var(--primary-color, #f09199);
           border-radius: 8px;
@@ -163,63 +167,108 @@
           font: 13px/1.7 'Lucida Grande', Helvetica, Arial, sans-serif;
           text-align: center;
           overflow-wrap: anywhere;
+          cursor: default;
+        }
+        #${TOAST_ID}[hidden] { display: none; }
+        #${TOAST_ID} .reminder-summary { display: block; }
+        #${TOAST_ID} .reminder-actions {
+          display: flex;
+          justify-content: center;
+          gap: 16px;
+          margin-top: 4px;
+        }
+        #${TOAST_ID} button {
+          appearance: none;
+          margin: 0;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          color: #999;
+          box-shadow: none;
+          font: inherit;
+          font-size: 12px;
+          white-space: nowrap;
           cursor: pointer;
         }
-        #${TOAST_ID} button:hover { border-color: var(--primary-color, #f09199); }
+        #${TOAST_ID} button:hover { color: var(--primary-color, #f09199); }
         #${TOAST_ID} button:focus-visible {
           outline: 2px solid var(--primary-color, #f09199);
           outline-offset: 3px;
         }
-        #${TOAST_ID} span { display: block; }
-        #${TOAST_ID} .refresh-hint { color: #999; font-size: 12px; }
-        html[data-theme='dark'] #${TOAST_ID} button {
+        html[data-theme='dark'] #${TOAST_ID} {
           background: #303132;
           color: #eee;
           border-color: #555;
           border-top-color: var(--primary-color, #f09199);
           box-shadow: 0 4px 18px rgb(0 0 0 / 28%);
         }
-        html[data-theme='dark'] #${TOAST_ID} button:hover {
-          border-color: var(--primary-color, #f09199);
-        }
       `;
       document.head.append(style);
 
-      const toast = document.createElement("div");
+      toast = document.createElement("div");
       toast.id = TOAST_ID;
-      toast.setAttribute("role", "status");
-      toast.setAttribute("aria-live", "polite");
-      toast.setAttribute("aria-atomic", "true");
-      const button = document.createElement("button");
-      button.type = "button";
+      toast.hidden = true;
       summary = document.createElement("span");
-      const hint = document.createElement("span");
-      hint.className = "refresh-hint";
-      hint.textContent = "点击刷新首页";
-      button.append(summary, hint);
-      button.addEventListener("click", () => location.reload());
-      toast.append(button);
+      summary.className = "reminder-summary";
+      summary.setAttribute("role", "status");
+      summary.setAttribute("aria-live", "polite");
+      summary.setAttribute("aria-atomic", "true");
+      const actions = document.createElement("div");
+      actions.className = "reminder-actions";
+      for (const [label, action] of [
+        ["点击刷新", () => location.reload()],
+        [
+          "本次忽略",
+          () => {
+            toast.hidden = true;
+          },
+        ],
+        ["本页忽略", onIgnorePage],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.addEventListener("click", action);
+        actions.append(button);
+      }
+      toast.append(summary, actions);
       document.body.append(toast);
 
       // Only strip our exact prefix, not arbitrary unread counts from other scripts.
-      new MutationObserver(updateTitle).observe(document.head, {
+      titleObserver = new MutationObserver(updateTitle);
+      titleObserver.observe(document.head, {
         subtree: true,
         childList: true,
         characterData: true,
       });
     }
 
-    return (counts) => {
-      const nextTotal = counts.reduce((sum, count) => sum + count, 0);
-      if (nextTotal === total) return;
-      total = nextTotal;
-      if (!summary) mount();
-      const labels = ["最新动态", "小组话题", "条目讨论"];
-      const parts = counts.flatMap((count, index) =>
-        count ? [`${labels[index]} ${count} ${index === 0 ? "条" : "个"}`] : [],
-      );
-      summary.textContent = `检测到更新：${parts.join(" · ")}`;
-      updateTitle();
+    return {
+      update({ counts, hasUpdates }) {
+        const nextTotal = counts.reduce((sum, count) => sum + count, 0);
+        if (!nextTotal) return;
+        total = nextTotal;
+        if (!toast) mount();
+        const labels = ["最新动态", "小组话题", "条目讨论"];
+        const parts = counts.flatMap((count, index) =>
+          count
+            ? [`${labels[index]} ${count} ${index === 0 ? "条" : "个"}`]
+            : [],
+        );
+        const text = `检测到更新：${parts.join(" · ")}`;
+        if (summary.textContent !== text) summary.textContent = text;
+        // A counted topic can receive more replies without changing the total.
+        if (hasUpdates) toast.hidden = false;
+        updateTitle();
+      },
+      stop() {
+        if (toast) toast.hidden = true;
+        titleObserver?.disconnect();
+        if (prefix && document.title.startsWith(prefix))
+          document.title = document.title.slice(prefix.length);
+        prefix = "";
+      },
     };
   }
 
@@ -227,14 +276,23 @@
     const initial = readSnapshot(document);
     if (!initial) return;
     const observe = createTracker(initial);
-    const remind = createReminder();
+    const reminder = createReminder(stop);
     const homepage = `${location.origin}/`;
     let inFlight = null;
     let suspended = false;
+    let stopped = false;
     let interval;
 
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(interval);
+      inFlight?.abort();
+      reminder.stop();
+    }
+
     async function poll() {
-      if (suspended || inFlight) return;
+      if (stopped || suspended || inFlight) return;
       const controller = new AbortController();
       inFlight = controller;
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -245,7 +303,8 @@
           redirect: "error",
           signal: controller.signal,
         });
-        if (!response.ok) return;
+        if (stopped || suspended || controller.signal.aborted || !response.ok)
+          return;
         const url = new URL(response.url);
         const contentType = response.headers
           .get("content-type")
@@ -259,13 +318,13 @@
         )
           return;
         const html = await response.text();
-        if (controller.signal.aborted || suspended) return;
+        if (stopped || suspended || controller.signal.aborted) return;
         const snapshot = readSnapshot(
           new DOMParser().parseFromString(html, "text/html"),
         );
         if (!snapshot) return;
-        const counts = observe(snapshot);
-        if (counts) remind(counts);
+        const update = observe(snapshot);
+        if (update) reminder.update(update);
       } catch {
         // Network errors, login redirects and challenges never replace valid state.
       } finally {
@@ -279,12 +338,13 @@
       if (document.visibilityState === "visible") void poll();
     });
     window.addEventListener("pagehide", () => {
+      if (stopped) return;
       suspended = true;
       clearInterval(interval);
       inFlight?.abort();
     });
     window.addEventListener("pageshow", () => {
-      if (!suspended) return;
+      if (stopped || !suspended) return;
       suspended = false;
       interval = setInterval(poll, POLL_INTERVAL);
       void poll();
