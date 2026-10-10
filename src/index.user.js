@@ -167,7 +167,7 @@
           font: 13px/1.7 'Lucida Grande', Helvetica, Arial, sans-serif;
           text-align: center;
           overflow-wrap: anywhere;
-          cursor: default;
+          cursor: pointer;
         }
         #${TOAST_ID}[hidden] { display: none; }
         #${TOAST_ID} .reminder-summary { display: block; }
@@ -192,6 +192,7 @@
           cursor: pointer;
         }
         #${TOAST_ID} button:hover { color: var(--primary-color, #f09199); }
+        #${TOAST_ID}:focus-visible,
         #${TOAST_ID} button:focus-visible {
           outline: 2px solid var(--primary-color, #f09199);
           outline-offset: 3px;
@@ -203,12 +204,32 @@
           border-top-color: var(--primary-color, #f09199);
           box-shadow: 0 4px 18px rgb(0 0 0 / 28%);
         }
+        #${TOAST_ID}:hover,
+        #${TOAST_ID}:focus-visible,
+        html[data-theme='dark'] #${TOAST_ID}:hover,
+        html[data-theme='dark'] #${TOAST_ID}:focus-visible {
+          border-color: var(--primary-color, #f09199);
+        }
       `;
       document.head.append(style);
 
       toast = document.createElement("div");
       toast.id = TOAST_ID;
       toast.hidden = true;
+      toast.tabIndex = 0;
+      toast.addEventListener("click", (event) => {
+        if (event.target.closest(".reminder-actions button")) return;
+        location.reload();
+      });
+      toast.addEventListener("keydown", (event) => {
+        if (
+          event.target !== toast ||
+          (event.key !== "Enter" && event.key !== " ")
+        )
+          return;
+        event.preventDefault();
+        location.reload();
+      });
       summary = document.createElement("span");
       summary.className = "reminder-summary";
       summary.setAttribute("role", "status");
@@ -217,7 +238,6 @@
       const actions = document.createElement("div");
       actions.className = "reminder-actions";
       for (const [label, action] of [
-        ["点击刷新", () => location.reload()],
         [
           "本次忽略",
           () => {
@@ -256,7 +276,7 @@
             ? [`${labels[index]} ${count} ${index === 0 ? "条" : "个"}`]
             : [],
         );
-        const text = `检测到更新：${parts.join(" · ")}`;
+        const text = `刷新首页：${parts.join(" · ")}`;
         if (summary.textContent !== text) summary.textContent = text;
         // A counted topic can receive more replies without changing the total.
         if (hasUpdates) toast.hidden = false;
@@ -273,6 +293,7 @@
   }
 
   function initialize() {
+    // Keep this debugging code up to date
     // const debugReminder = createReminder(() => debugReminder.stop());
     // debugReminder.update({ counts: [3, 2, 5], hasUpdates: true });
     // return;
